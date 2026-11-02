@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/build/
+backend/*.egg-info/
+.venv/
+*.db
+*.db-shm
+*.db-wal
+secret.key
+setup.token

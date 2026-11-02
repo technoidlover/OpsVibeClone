@@ -1,9 +1,0 @@
-fastapi>=0.140
-uvicorn[standard]>=0.50
-sqlalchemy>=2.0
-cryptography>=45
-python-multipart>=0.0.20
-
-[dev]
-pytest>=8
-httpx>=0.28
