@@ -1,0 +1,38 @@
+[project]
+name = "vibepanel"
+version = "1.2.0"
+description = "Self-hosted control panel: deploy từ GitHub với Docker + Traefik, AI hỗ trợ tùy chọn"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.140",
+    "uvicorn[standard]>=0.50",
+    "sqlalchemy>=2.0",
+    "cryptography>=45",
+    # Nhận file tải lên (import backup database)
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.28"]
+
+[project.scripts]
+opsvibes = "vibepanel.main:run"
+# Khôi phục panel từ file sao lưu .vpbak (chạy trong container rồi khởi động lại panel)
+opsvibes-restore = "vibepanel.panel_backup:restore_cli"
+# Đặt lại mật khẩu admin khi quên: docker exec -it opsvibes opsvibes-reset-password
+opsvibes-reset-password = "vibepanel.admin_cli:reset_password_cli"
+# Thay container panel bằng image mới (chạy trong container opsvibes-updater, xem updates.py)
+opsvibes-update = "vibepanel.updates:updater_cli"
+# Tên lệnh cũ, giữ cho tài liệu / script viết trước khi đổi tên sản phẩm
+vibepanel = "vibepanel.main:run"
+vibepanel-restore = "vibepanel.panel_backup:restore_cli"
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["vibepanel*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

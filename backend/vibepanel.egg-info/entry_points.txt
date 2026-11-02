@@ -1,0 +1,7 @@
+[console_scripts]
+opsvibes = vibepanel.main:run
+opsvibes-reset-password = vibepanel.admin_cli:reset_password_cli
+opsvibes-restore = vibepanel.panel_backup:restore_cli
+opsvibes-update = vibepanel.updates:updater_cli
+vibepanel = vibepanel.main:run
+vibepanel-restore = vibepanel.panel_backup:restore_cli

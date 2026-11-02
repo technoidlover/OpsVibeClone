@@ -1,0 +1,501 @@
+"""Thông báo của pipeline, log deploy, database, agent và các module lõi khác."""
+
+VI: dict[str, str] = {
+    "deploy.root_dir": '==> Build từ thư mục {path}/',
+    "deploy.root_dir_missing": 'Không có thư mục {path} trong mã nguồn: sửa "Thư mục gốc" trong tab Cài đặt của service',
+    "deploy.ref_missing": '==> Cảnh báo: không giải được {ref} (service không tồn tại hoặc chưa có tên miền), để trống',
+    "wp.detected": '==> Nhận diện WordPress: tự cấu hình cho môi trường container',
+    "wp.config_patched": '==> wp-config.php: {keys} đọc từ biến môi trường (database liên kết), giá trị cũ giữ làm dự phòng',
+    "wp.config_created": '==> Tạo wp-config.php từ wp-config-sample.php: database lấy từ biến môi trường, khóa bảo mật ngẫu nhiên',
+    "wp.moved_out": '==> Chuyển {name} ra khỏi thư mục web (nếu để lại, ai cũng tải được)',
+    "wp.nginx": '==> Thêm nginx.template.conf: permalink, chặn truy cập wp-config, file .sql, log',
+    "wp.chown": 'cho PHP (user nobody) ghi được wp-content: upload ảnh, cài plugin/theme',
+    "site.chown": 'cho PHP (user nobody) ghi được toàn bộ mã nguồn như trên hosting: cài / cập nhật plugin, theme, file do code tự ghi',
+    "site.fresh": "==> Mã nguồn website chạy từ volume {volume}: dựng từ mã nguồn trong file nén",
+    "site.reuse": "==> Mã nguồn website chạy từ volume {volume}: giữ nguyên các thay đổi trên web (plugin, theme, file đã sửa)",
+    "wp.uploads_volume": '==> Giữ {mount} bằng volume: ảnh tải lên không mất khi deploy lại',
+    "wp.dump_many": '==> Có nhiều file dump ({names}): không tự import, hãy import file đúng ở trang database',
+    "wp.dump_no_db": '==> Có file dump {name} nhưng service chưa liên kết database MySQL/MariaDB: bỏ qua import',
+    "wp.dump_skipped": '==> Database {db} đã từng import dữ liệu: không tự import {name} để tránh ghi đè',
+    "wp.dump_import": '==> Import {name} ({size} MB) vào database {db}',
+    "wp.dump_done": '==> Import xong',
+    "wp.dump_failed": '==> Cảnh báo: import lỗi ({error}); app vẫn được khởi động, có thể import lại ở trang database',
+    "archive.no_space": 'Không đủ dung lượng ổ đĩa: cần {need} GB, còn ghi được {free} GB (luôn chừa {reserve} GB cho server)',
+    "archive.no_space_upload": 'Ổ đĩa sắp đầy, đã dừng tải lên (luôn chừa {reserve} GB cho server)',
+    "archive.git_failed": "Không chuẩn bị được mã nguồn sau khi giải nén",
+    "files.assemble": "==> Gom file tự viết của service",
+    "files.ai_saved": "==> Lưu file AI Agent đã sửa vào tab File của service: {files}",
+    "files.applied": "==> Dùng file riêng của service (ghi đè file cùng tên): {files}",
+    "files.manual_empty": "Service chưa có file nào. Viết Dockerfile hoặc compose.yml ở tab File của service.",
+    "files.manual_needs_dockerfile": "Không có Dockerfile. Viết Dockerfile ở tab File, hoặc chọn cách build "
+                                     "\"Docker Compose\" nếu dùng compose.yml.",
+    "compose.missing": "Cách build là Docker Compose nhưng không có compose.yml / docker-compose.yml "
+                       "(thêm ở tab File của service hoặc vào repo).",
+    "compose.config": "==> Đọc cấu hình {file}",
+    "compose.invalid": "compose.yml không hợp lệ: {error}",
+    "compose.no_services": "compose.yml không có service nào",
+    "compose.public_missing": "Không có service \"{name}\" trong compose.yml (có: {names}). Sửa \"Service nhận "
+                              "tên miền\" ở tab File.",
+    "compose.public_ambiguous": "Không biết service nào trong compose.yml nhận tên miền (có: {names}). Chọn "
+                                "\"Service nhận tên miền\" ở tab File.",
+    "compose.network_mode": "Service {name} dùng network_mode nên panel không nối được tên miền vào. Bỏ "
+                            "network_mode hoặc chọn service khác nhận tên miền.",
+    "compose.port_dropped": "==> Bỏ cổng {port} của {name}: cổng 80/443 của máy dành cho Traefik (tên miền + SSL)",
+    "compose.up": "==> docker compose (project {project}) · nhận tên miền: {public} · các service: {services}",
+    "compose.no_container": "Không tìm thấy container của service {name} sau khi chạy compose",
+    "compose.wait": "==> Chờ {container} nhận kết nối ở cổng {port}",
+    "compose.restore": "==> Bản mới không lên: chạy lại cấu hình của job #{job_id}",
+    "archive.unsafe_path": 'File nén chứa đường dẫn không an toàn: {name}',
+    "archive.unsafe_link": 'File nén chứa liên kết trỏ ra ngoài thư mục: {name}',
+    "archive.too_many_files": 'File nén có quá nhiều file (tối đa {limit})',
+    "archive.too_large": 'Dung lượng sau giải nén vượt quá {limit} GB',
+    "archive.unsupported": 'Định dạng không hỗ trợ: dùng .zip, .tar, .tar.gz (.tgz), .tar.bz2 hoặc .tar.xz',
+    "archive.corrupt": 'File nén bị lỗi, không giải nén được: {error}',
+    "archive.empty": 'File nén không có file nào',
+    "archive.missing": 'Chưa có file nén: tải file lên trong tab Cài đặt của service',
+    "archive.extracting": '==> Giải nén {name}',
+    "archive.flattened": '==> File nén chứa một thư mục {folder}/: dùng nội dung bên trong làm thư mục gốc',
+    "ai.provider_custom": "Tùy chỉnh (chuẩn OpenAI)",
+    # ---------- Job ----------
+    "jobs.no_docker": "Panel chưa được cấp quyền Docker (OPSVIBES_DOCKER=true và mount docker.sock)",
+    "jobs.interrupted": "Panel khởi động lại khi job đang chạy",
+    "jobs.unsupported_kind": "Loại job không hỗ trợ: {kind}",
+    "jobs.superseded": "Bị thay thế bởi job mới hơn",
+    "jobs.done": "==> Hoàn tất",
+    "jobs.failed": "==> Thất bại: {error}",
+    # ---------- Lệnh ----------
+    "runner.timeout": "Lệnh vượt quá thời gian cho phép ({timeout}s): {cmd}",
+    "runner.exit_code": "Lệnh {cmd} thất bại với mã thoát {code}",
+    # ---------- Docker ----------
+    "docker.call_failed": "Không gọi được docker {command}: {error}",
+    "docker.command_failed": "docker {command} thất bại",
+    "docker.nixpacks_plan_error": "Không chạy được nixpacks plan: {error}",
+    "docker.nixpacks_plan_failed": "nixpacks plan thất bại",
+    "docker.env_newline": "Biến {key} chứa xuống dòng, chưa hỗ trợ",
+    "docker.import_exit": "Lệnh import thoát với mã {code}",
+    "docker.logs_failed": "Không đọc được log container",
+    "docker.container_stopped": "container đã dừng",
+    "docker.export_exit": "Lệnh xuất dữ liệu thoát với mã {code}",
+    "restore.done": "==> Khôi phục xong. Các service đang được deploy lại, xem tiến trình ở từng service.",
+    "restore.failed": "==> Khôi phục dừng vì lỗi: {error}",
+    "restore.no_docker": "==> Panel không điều khiển Docker: chỉ khôi phục cấu hình",
+    "restore.base_domain": "==> Đổi tên miền mặc định theo IP máy mới: {domain}",
+    "restore.db_start": "==> Tạo lại database {name}",
+    "restore.db_kept": "==> {name}: dữ liệu đang có trên máy được giữ nguyên",
+    "restore.db_import": "==> {name}: nạp dữ liệu từ bản sao lưu",
+    "restore.db_result": "    {name}: {status} {error}",
+    "restore.volume_kept": "==> Volume {volume}: dữ liệu đang có trên máy được giữ nguyên",
+    "restore.volume_import": "==> Volume {volume}: nạp dữ liệu từ bản sao lưu",
+    "restore.service_running": "==> {name}: đang chạy, bỏ qua",
+    "restore.service_no_source": "==> {name}: không có file nén mã nguồn, cần tải lên lại rồi deploy",
+    "restore.service_deploy": "==> {name}: deploy lại",
+    "backup.downloading": "==> Tải bản sao lưu {name} từ nơi lưu ngoài về VPS",
+    "backup.restore_start": "==> Khôi phục dữ liệu từ bản sao lưu {name}",
+    "backup.stop": "==> Dừng {container} trong lúc ghi dữ liệu",
+    "backup.start": "==> Chạy lại {container}",
+    "backup.restore_volume": "==> Ghi đè volume {volume} ({size} MB nén)",
+    "pbackup.start": "==> Khôi phục project từ bản sao lưu {name}",
+    "pbackup.db_import": "==> Database {name}: nạp lại dữ liệu từ bản sao lưu (xem chi tiết ở trang database)",
+    "pbackup.db_done": "    {name}: xong",
+    "pbackup.db_failed": "Nạp database {name} thất bại: {error}",
+    "pbackup.db_missing": "==> Database {name}: không còn trong project (hoặc khác loại), bỏ qua",
+    "pbackup.db_skipped": "==> Database {name}: lúc sao lưu đang dừng nên không có trong bản này",
+    "pbackup.service_missing": "==> Service {name}: không còn trong project, bỏ qua",
+    "pbackup.source": "==> {name}: đặt lại mã nguồn {file}",
+    "pbackup.files": "==> {name}: đặt lại file tự viết (Dockerfile / compose...)",
+    "pbackup.deploy": "==> {name}: deploy lại với mã nguồn trong bản sao lưu (xem ở tab Deployments của service)",
+    "pbackup.done": "==> Khôi phục xong",
+    "pbackup.failed": "==> Khôi phục dừng vì lỗi: {error}",
+    "pbackup.readme": (
+        "Bản sao lưu project {project} xuất từ OpsVibes ({created} UTC)\n\n"
+        "Bên trong:\n"
+        "- <tên service>/: mã nguồn website đang chạy (thư mục web, giống public_html). WordPress gồm cả\n"
+        "  plugin, theme đã cài và ảnh upload.\n"
+        "- databases/<tên>.sql: dữ liệu MySQL / MariaDB (SQL thuần). PostgreSQL là file .dump (nạp bằng\n"
+        "  pg_restore), MongoDB là file .archive.gz (mongorestore --gzip --archive=...).\n"
+        "- <tên service>-data/: thư mục dữ liệu khác của service (nếu có).\n\n"
+        "Chuyển sang hosting khác (cPanel, DirectAdmin...):\n"
+        "1. Tải nội dung thư mục <tên service>/ lên public_html (hoặc thư mục web của tên miền).\n"
+        "2. Tạo database mới rồi import file .sql trong databases/ (vd phpMyAdmin → Import).\n"
+        "3. Sửa thông tin kết nối database. WordPress: trong wp-config.php các dòng có dạng\n"
+        "   define('DB_NAME', getenv('DB_NAME') ?: 'tên_cũ'); thay giá trị trong dấu nháy cuối bằng thông tin\n"
+        "   database mới (làm tương tự với DB_USER, DB_PASSWORD, DB_HOST).\n"
+        "4. Khối \"OpsVibes\" (hoặc \"VibePanel\") trong wp-config.php giúp WordPress chạy sau HTTPS và tự nhận tên miền đang truy\n"
+        "   cập; giữ nguyên được trên hosting khác. Xóa khối đó thì cần sửa siteurl / home trong bảng *_options\n"
+        "   nếu đổi tên miền.\n"
+    ),
+    "deploy.wait_worker": "==> Worker không mở cổng: chờ {seconds}s xem container có chạy ổn định không",
+    "deploy.wait_http": "==> Chờ http://…:{port}{path} trả 2xx/3xx",
+    "deploy.http_unhealthy": "App mở cổng nhưng {path} không trả 2xx/3xx sau {timeout}s ({detail}). Sửa đường dẫn "
+                             "health check trong Cài đặt của service, hoặc xem log container ở trên. "
+                             "Bản đang chạy (nếu có) không bị ảnh hưởng.",
+    # ---------- Deploy ----------
+    "deploy.github_disconnected": "Kết nối GitHub đã bị gỡ: kết nối lại trong Cài đặt hoặc đổi sang URL Git",
+    "deploy.github_token_failed": "Không lấy được quyền truy cập repo từ GitHub App ({error}). "
+                                  "Kiểm tra App còn được cài và còn quyền với repo này.",
+    "deploy.fetch_source": "==> Lấy mã nguồn {repo} (nhánh {branch})",
+    "deploy.build_dockerfile": "==> Build image {image} từ Dockerfile",
+    "deploy.build_nixpacks": "==> Build image {image} bằng Nixpacks (tự nhận diện ngôn ngữ)",
+    "deploy.nixpacks_plan_unreadable": "Không đọc được kế hoạch Nixpacks ({error}), để Nixpacks tự xử lý",
+    "deploy.no_start_command": "Không tìm thấy lệnh khởi động app. Đặt \"Lệnh khởi động\" trong tab Cài đặt của service "
+                               "(vd: python app.py, node server.js), thêm Procfile vào repo, hoặc bấm \"Nhờ AI sửa\".",
+    "deploy.adjustment": "==> Điều chỉnh: {note}",
+    "deploy.pull_image": "==> Kéo image {image}",
+    "deploy.stop_old": "==> Dừng bản cũ {name} trước (service có volume dữ liệu, gián đoạn vài giây)",
+    "deploy.start_container": "==> Khởi động container {container} (cổng {port})",
+    "deploy.container_log": "--- Log container ---",
+    "deploy.restart_old": "==> Chạy lại bản cũ {name}",
+    "deploy.restart_old_failed": "Không chạy lại được {name}: {error}",
+    "deploy.missing_env": "App dừng ngay khi khởi động vì thiếu biến môi trường: {names}. "
+                          "Thêm vào tab Biến môi trường của service rồi deploy lại. "
+                          "Bản đang chạy (nếu có) không bị ảnh hưởng.",
+    "deploy.app_crashed": "App bị lỗi và dừng ngay khi khởi động (xem log container ở trên). "
+                          "Bản đang chạy (nếu có) không bị ảnh hưởng.",
+    "deploy.port_timeout": "App không nhận kết nối ở cổng {port} sau {timeout}s. "
+                           "Hãy cho app lắng nghe 0.0.0.0:$PORT hoặc đặt đúng cổng trong cấu hình service. "
+                           "Bản đang chạy (nếu có) không bị ảnh hưởng.",
+    "deploy.switch_traffic": "==> Chuyển traffic sang bản mới",
+    "deploy.remove_old": "==> Gỡ container cũ {name}",
+    "deploy.patch_not_found": "Không tìm thấy thay đổi của agent #{job_id}",
+    "deploy.apply_patch": "==> Áp thay đổi của agent #{job_id} (chỉ cho lần deploy này, repo không đổi)",
+    "deploy.apply_patch_failed": "Không áp được thay đổi của agent #{job_id} lên mã nguồn mới nhất "
+                                 "(repo đã đổi ở cùng chỗ). Chạy lại agent trên bản mới.",
+    "deploy.rollback_not_found": "Không tìm thấy bản deploy để rollback",
+    "deploy.rollback_image_pruned": "Image {image} đã bị dọn, không thể rollback về job #{job_id}",
+    "deploy.rollback": "==> Rollback về job #{job_id} ({commit})",
+    "deploy.unknown_commit": "không rõ commit",
+    # ---------- Database ----------
+    "db.wait_import": "==> Chờ {label} import backup xong",
+    "db.import_timeout": "{label} import quá lâu, deploy dừng lại",
+    "db.import_failed_warning": "==> Cảnh báo: import vào {label} lỗi ({error}); app vẫn được khởi động",
+    "db.wait_ready": "==> Chờ {label} sẵn sàng ({host}:{port})",
+    "db.ready_timeout": "{label} chưa sẵn sàng sau {timeout}s. Xem trang database để kiểm tra.",
+    "db.import_unsupported": "{engine} chưa hỗ trợ import backup",
+    "db.backup_format": "File backup không đúng định dạng cho {engine}: cần {hint}",
+    "db.hint_mongo": "file archive của mongodump (--archive, có thể nén gzip) hoặc file .json / .jsonl",
+    "db.hint_sql": "file .sql hoặc .sql.gz",
+    # ---------- Nhận diện (detect) ----------
+    "detect.start_from_settings": "lệnh khởi động trong cài đặt service: {command}",
+    "detect.start_guessed": "Nixpacks không tìm ra lệnh khởi động; panel nhận diện {reason}: {command}",
+    "detect.fastapi": "app FastAPI trong {file}",
+    "detect.flask_gunicorn": "app Flask trong {file}, chạy bằng gunicorn",
+    "detect.flask_dev": "app Flask trong {file}; nên thêm gunicorn vào requirements.txt để chạy production",
+    "detect.python_main": "{file} có khối __main__ (app phải lắng nghe cổng $PORT)",
+    "detect.node_version": "repo không khai báo phiên bản Node: dùng Node {version} (bản mặc định Node 18 đã hết hạn)",
+    "detect.spa_start": "repo có script start ({script}): chạy server của repo thay vì phục vụ trang tĩnh",
+    "detect.bun_no_avx2": "CPU máy chủ không có AVX2 nên Bun không chạy được: cài và chạy bằng npm "
+                          "(--legacy-peer-deps để giữ cách Bun bỏ qua xung đột peer dependency)",
+    "detect.db_prisma": "Prisma dùng provider \"{provider}\"",
+    "detect.db_env_url": ".env.example có chuỗi kết nối {scheme}://",
+    "detect.db_compose_image": "{file} dùng image {image}",
+    "detect.db_package": "{file} dùng {package}",
+    "detect.db_laravel": "Laravel mặc định dùng MySQL",
+    "detect.db_wordpress": "WordPress dùng MySQL/MariaDB",
+    # ---------- Agent ----------
+    "agent.provider_no_key": "Provider {name} chưa có API key",
+    "docker.exec_timeout": "(dừng sau {timeout} giây)",
+    "assistant.diff_truncated": "… (diff quá dài, đã cắt bớt; tải patch để xem đầy đủ)",
+    "heal.title": "Sửa deploy #{job_id} của {target}",
+    "heal.prepare_title": "Chuẩn bị deploy #{job_id} của {target}",
+    "heal.prepare_start": "==> AI Agent chuẩn bị cấu hình và biến môi trường trước khi build (model {model}) "
+                          "· hội thoại #{session} trong trang AI Agent",
+    "heal.prepared": "==> AI Agent đã bổ sung cấu hình / biến môi trường",
+    "heal.prepare_no_change": "==> AI Agent thấy cấu hình đã đủ, không đổi gì",
+    "heal.start": "==> AI Agent tìm cách sửa (lần {attempt}/{max}, model {model}) · hội thoại #{session} trong trang AI Agent",
+    "heal.skipped": "==> Bỏ qua AI tự sửa: {error}",
+    "heal.failed": "==> AI Agent không sửa được: {error}",
+    "heal.summary": "==> AI: {text}",
+    "heal.no_change": "==> AI Agent không đổi cấu hình nào, dừng tự sửa",
+    "heal.rebuild": "==> AI Agent đã sửa cấu hình, build lại",
+    "assistant.api_error": "API của model trả lỗi HTTP {code}: {detail}",
+    "assistant.empty_reply": "Model không trả về nội dung",
+    "assistant.blocked": "Model từ chối yêu cầu ({reason})",
+    "assistant.brain_unsupported": "Chưa hỗ trợ lựa chọn model này",
+    "assistant.model_required": "Chọn model cho provider {name} (hoặc đặt model mặc định ở trang AI)",
+    "assistant.interrupted": "Panel khởi động lại khi agent đang chạy: gửi tin nhắn để chạy tiếp",
+    "assistant.no_reply": "(model không trả lời)",
+    "assistant.stopped": "(Đã dừng theo yêu cầu)",
+    "assistant.rate_limited": "Model đã hết quota (key miễn phí giới hạn rất thấp). Thêm model khác ở trang Model AI để tự chuyển khi hết quota.",
+    "assistant.retry_after": "thử lại sau {when}",
+    "assistant.too_many_turns": "Agent dừng sau {max} bước: gửi tin nhắn để chạy tiếp",
+    # ---------- AI provider ----------
+    "ai.key_rejected": "Provider từ chối API key (HTTP {code})",
+    "ai.http_error": "Provider trả về lỗi HTTP {code}",
+    "ai.connect_failed": "Không kết nối được tới {host}: {error}",
+    "ai.not_json": "Provider trả về dữ liệu không phải JSON",
+    # ---------- Ứng dụng 1-click ----------
+    "tpl.not_found": "Không có ứng dụng này trong danh mục",
+    "tpl.no_docker": "Panel chưa được cấp quyền Docker",
+    "tpl.needs_url": "{app} cần một địa chỉ công khai: nhập tên miền, hoặc đặt tên miền gốc trong Cài đặt",
+    "tpl.service_exists": "Đã có service tên {name} trong project",
+    "tpl.name_conflict": "Tên service hoặc tên miền đã được dùng",
+    "tpl.category.cms": "CMS & Blog",
+    "tpl.category.automation": "Tự động hóa",
+    "tpl.category.monitoring": "Giám sát",
+    "tpl.category.devtools": "Công cụ dev",
+    "tpl.wordpress.description": "CMS phổ biến nhất thế giới. Image chính thức (PHP 8.3 + Apache), tự sinh khóa bảo mật, "
+                                 "HTTPS sau Traefik và cài plugin trực tiếp.",
+    "tpl.wordpress.next_step": "Mở app để chọn ngôn ngữ và tạo tài khoản quản trị.",
+    "tpl.ghost.description": "Nền tảng blog, newsletter và membership hiện đại viết bằng Node.js.",
+    "tpl.ghost.next_step": "Vào /ghost trên địa chỉ của app để tạo tài khoản quản trị.",
+    "tpl.n8n.description": "Tự động hóa quy trình kiểu Zapier, tự host: kéo thả workflow, hàng trăm tích hợp, gọi AI.",
+    "tpl.n8n.next_step": "Mở app để tạo tài khoản chủ sở hữu.",
+    "tpl.uptime-kuma.description": "Theo dõi website và dịch vụ còn sống không, báo qua Telegram, Discord, email...",
+    "tpl.uptime-kuma.next_step": "Mở app để tạo tài khoản quản trị.",
+    "tpl.gitea.description": "Git server nhẹ kiểu GitHub: repo, issue, pull request, CI (Actions).",
+    "tpl.gitea.next_step": "Mở app, kiểm tra cấu hình đã điền sẵn rồi bấm Cài đặt để tạo tài khoản quản trị.",
+    "tpl.adminer.description": "Quản lý database qua web (MySQL, MariaDB, PostgreSQL...). Đăng nhập bằng host và mật khẩu "
+                               "trong trang database của project.",
+    "tpl.adminer.next_step": "Đăng nhập bằng thông tin trong trang database (host nội bộ, user, mật khẩu).",
+}
+
+EN: dict[str, str] = {
+    "deploy.root_dir": '==> Building from folder {path}/',
+    "deploy.root_dir_missing": 'Folder {path} not found in the source: fix "Root directory" in the service\'s Settings tab',
+    "deploy.ref_missing": "==> Warning: could not resolve {ref} (service doesn't exist or has no domain yet), left empty",
+    "wp.detected": '==> WordPress detected: configuring it for containers',
+    "wp.config_patched": '==> wp-config.php: {keys} now read from environment variables (linked database), old values kept as fallback',
+    "wp.config_created": '==> Created wp-config.php from wp-config-sample.php: database from environment variables, random security keys',
+    "wp.moved_out": '==> Moved {name} out of the web root (otherwise anyone could download it)',
+    "wp.nginx": '==> Added nginx.template.conf: permalinks, blocks access to wp-config, .sql files and logs',
+    "wp.chown": 'let PHP (user nobody) write to wp-content: media uploads, plugin/theme installs',
+    "site.chown": 'let PHP (user nobody) write the whole source like on shared hosting: plugin/theme installs and updates, files the code writes',
+    "site.fresh": "==> The website source runs from volume {volume}: built from the source in the archive",
+    "site.reuse": "==> The website source runs from volume {volume}: changes made on the site (plugins, themes, edited files) are kept",
+    "wp.uploads_volume": '==> Keeping {mount} in a volume so uploaded media survives redeploys',
+    "wp.dump_many": '==> Found several dump files ({names}): not importing automatically, import the right one on the database page',
+    "wp.dump_no_db": '==> Found dump file {name} but the service has no linked MySQL/MariaDB database: skipping import',
+    "wp.dump_skipped": '==> Database {db} has already been imported into: not importing {name} automatically to avoid overwriting',
+    "wp.dump_import": '==> Importing {name} ({size} MB) into database {db}',
+    "wp.dump_done": '==> Import finished',
+    "wp.dump_failed": '==> Warning: import failed ({error}); the app still starts, you can re-import on the database page',
+    "archive.no_space": 'Not enough disk space: {need} GB needed, {free} GB available (the panel always keeps {reserve} GB free for the server)',
+    "archive.no_space_upload": 'The disk is almost full, upload stopped (the panel always keeps {reserve} GB free for the server)',
+    "archive.git_failed": "Could not prepare the source after extraction",
+    "files.assemble": "==> Collecting the service's custom files",
+    "files.ai_saved": "==> Saved the files the AI Agent changed to the service's Files tab: {files}",
+    "files.applied": "==> Using the service's custom files (overriding files with the same name): {files}",
+    "files.manual_empty": "The service has no files yet. Write a Dockerfile or compose.yml in the service's Files tab.",
+    "files.manual_needs_dockerfile": "No Dockerfile. Write one in the Files tab, or pick the \"Docker Compose\" "
+                                     "build method if you use compose.yml.",
+    "compose.missing": "The build method is Docker Compose but there is no compose.yml / docker-compose.yml "
+                       "(add one in the service's Files tab or to the repo).",
+    "compose.config": "==> Reading {file}",
+    "compose.invalid": "compose.yml is invalid: {error}",
+    "compose.no_services": "compose.yml has no services",
+    "compose.public_missing": "There is no service \"{name}\" in compose.yml (found: {names}). Fix \"Service "
+                              "receiving the domain\" in the Files tab.",
+    "compose.public_ambiguous": "Can't tell which compose.yml service receives the domain (found: {names}). Pick "
+                                "\"Service receiving the domain\" in the Files tab.",
+    "compose.network_mode": "Service {name} uses network_mode, so the panel can't route the domain to it. Remove "
+                            "network_mode or pick another service to receive the domain.",
+    "compose.port_dropped": "==> Dropping port {port} of {name}: host ports 80/443 belong to Traefik (domains + SSL)",
+    "compose.up": "==> docker compose (project {project}) · domain goes to: {public} · services: {services}",
+    "compose.no_container": "No container found for service {name} after running compose",
+    "compose.wait": "==> Waiting for {container} to accept connections on port {port}",
+    "compose.restore": "==> The new version did not start: running job #{job_id}'s configuration again",
+    "archive.unsafe_path": 'The archive contains an unsafe path: {name}',
+    "archive.unsafe_link": 'The archive contains a link pointing outside the folder: {name}',
+    "archive.too_many_files": 'The archive contains too many files (max {limit})',
+    "archive.too_large": 'Extracted size exceeds {limit} GB',
+    "archive.unsupported": 'Unsupported format: use .zip, .tar, .tar.gz (.tgz), .tar.bz2 or .tar.xz',
+    "archive.corrupt": 'The archive is corrupted and could not be extracted: {error}',
+    "archive.empty": 'The archive contains no files',
+    "archive.missing": "No archive uploaded yet: upload one in the service's Settings tab",
+    "archive.extracting": '==> Extracting {name}',
+    "archive.flattened": '==> The archive contains a single folder {folder}/: using its contents as the root',
+    "ai.provider_custom": "Custom (OpenAI-compatible)",
+    # ---------- Job ----------
+    "jobs.no_docker": "The panel has no Docker access (set OPSVIBES_DOCKER=true and mount docker.sock)",
+    "jobs.interrupted": "The panel restarted while the job was running",
+    "jobs.unsupported_kind": "Unsupported job type: {kind}",
+    "jobs.superseded": "Superseded by a newer job",
+    "jobs.done": "==> Done",
+    "jobs.failed": "==> Failed: {error}",
+    # ---------- Commands ----------
+    "runner.timeout": "Command exceeded the time limit ({timeout}s): {cmd}",
+    "runner.exit_code": "Command {cmd} failed with exit code {code}",
+    # ---------- Docker ----------
+    "docker.call_failed": "Could not run docker {command}: {error}",
+    "docker.command_failed": "docker {command} failed",
+    "docker.nixpacks_plan_error": "Could not run nixpacks plan: {error}",
+    "docker.nixpacks_plan_failed": "nixpacks plan failed",
+    "docker.env_newline": "Variable {key} contains a newline, which is not supported yet",
+    "docker.import_exit": "Import command exited with code {code}",
+    "docker.logs_failed": "Could not read the container logs",
+    "docker.container_stopped": "the container stopped",
+    "docker.export_exit": "The export command exited with code {code}",
+    "restore.done": "==> Restore finished. Services are being redeployed; see progress on each service.",
+    "restore.failed": "==> Restore stopped with an error: {error}",
+    "restore.no_docker": "==> The panel doesn't control Docker: only the configuration was restored",
+    "restore.base_domain": "==> Default domain switched to the new machine's IP: {domain}",
+    "restore.db_start": "==> Recreating database {name}",
+    "restore.db_kept": "==> {name}: the data already on this machine is kept",
+    "restore.db_import": "==> {name}: loading data from the backup",
+    "restore.db_result": "    {name}: {status} {error}",
+    "restore.volume_kept": "==> Volume {volume}: the data already on this machine is kept",
+    "restore.volume_import": "==> Volume {volume}: loading data from the backup",
+    "restore.service_running": "==> {name}: already running, skipped",
+    "restore.service_no_source": "==> {name}: no source archive, upload it again and deploy",
+    "restore.service_deploy": "==> {name}: redeploying",
+    "backup.downloading": "==> Downloading backup {name} from the offsite storage",
+    "backup.restore_start": "==> Restoring data from backup {name}",
+    "backup.stop": "==> Stopping {container} while the data is written",
+    "backup.start": "==> Starting {container} again",
+    "backup.restore_volume": "==> Overwriting volume {volume} ({size} MB compressed)",
+    "pbackup.start": "==> Restoring the project from backup {name}",
+    "pbackup.db_import": "==> Database {name}: reloading data from the backup (details on the database page)",
+    "pbackup.db_done": "    {name}: done",
+    "pbackup.db_failed": "Loading database {name} failed: {error}",
+    "pbackup.db_missing": "==> Database {name}: no longer in the project (or a different engine), skipped",
+    "pbackup.db_skipped": "==> Database {name}: was stopped at backup time, so it isn't in this backup",
+    "pbackup.service_missing": "==> Service {name}: no longer in the project, skipped",
+    "pbackup.source": "==> {name}: putting back source {file}",
+    "pbackup.files": "==> {name}: putting back the custom files (Dockerfile / compose...)",
+    "pbackup.deploy": "==> {name}: redeploying with the source from the backup (see the service's Deployments tab)",
+    "pbackup.done": "==> Restore finished",
+    "pbackup.failed": "==> Restore stopped with an error: {error}",
+    "pbackup.readme": (
+        "Backup of project {project} exported from OpsVibes ({created} UTC)\n\n"
+        "Contents:\n"
+        "- <service name>/: the running website source (the web root, like public_html). For WordPress this\n"
+        "  includes installed plugins, themes and uploaded media.\n"
+        "- databases/<name>.sql: MySQL / MariaDB data (plain SQL). PostgreSQL is a .dump file (load it with\n"
+        "  pg_restore), MongoDB is an .archive.gz file (mongorestore --gzip --archive=...).\n"
+        "- <service name>-data/: other data folders of the service (if any).\n\n"
+        "Moving to another host (cPanel, DirectAdmin...):\n"
+        "1. Upload the contents of the <service name>/ folder to public_html (or the domain's web root).\n"
+        "2. Create a new database and import the .sql file from databases/ (e.g. phpMyAdmin → Import).\n"
+        "3. Update the database connection. WordPress: wp-config.php has lines like\n"
+        "   define('DB_NAME', getenv('DB_NAME') ?: 'old_name'); replace the last quoted value with the new\n"
+        "   database details (same for DB_USER, DB_PASSWORD, DB_HOST).\n"
+        "4. The \"OpsVibes\" (or \"VibePanel\") block in wp-config.php makes WordPress work behind HTTPS and follow the domain\n"
+        "   being visited; it is fine to keep on another host. If you remove it and change domains, update\n"
+        "   siteurl / home in the *_options table.\n"
+    ),
+    "deploy.wait_worker": "==> Worker without a port: waiting {seconds}s to see the container stays up",
+    "deploy.wait_http": "==> Waiting for http://…:{port}{path} to return 2xx/3xx",
+    "deploy.http_unhealthy": "The app opened its port but {path} did not return 2xx/3xx after {timeout}s ({detail}). "
+                             "Fix the health check path in the service settings, or see the container log above. "
+                             "The running version (if any) is not affected.",
+    # ---------- Deploy ----------
+    "deploy.github_disconnected": "The GitHub connection was removed: reconnect it in Settings or switch to a Git URL",
+    "deploy.github_token_failed": "Could not get repo access from the GitHub App ({error}). "
+                                  "Check that the App is still installed and has access to this repo.",
+    "deploy.fetch_source": "==> Fetching source {repo} (branch {branch})",
+    "deploy.build_dockerfile": "==> Building image {image} from Dockerfile",
+    "deploy.build_nixpacks": "==> Building image {image} with Nixpacks (auto-detecting the language)",
+    "deploy.nixpacks_plan_unreadable": "Could not read the Nixpacks plan ({error}), letting Nixpacks handle it",
+    "deploy.no_start_command": "No start command found for the app. Set \"Start command\" in the service's Settings tab "
+                               "(e.g. python app.py, node server.js), add a Procfile to the repo, or click \"Fix with AI\".",
+    "deploy.adjustment": "==> Adjustment: {note}",
+    "deploy.pull_image": "==> Pulling image {image}",
+    "deploy.stop_old": "==> Stopping the old version {name} first (the service has a data volume, a few seconds of downtime)",
+    "deploy.start_container": "==> Starting container {container} (port {port})",
+    "deploy.container_log": "--- Container log ---",
+    "deploy.restart_old": "==> Restarting the old version {name}",
+    "deploy.restart_old_failed": "Could not restart {name}: {error}",
+    "deploy.missing_env": "The app stopped right after starting because environment variables are missing: {names}. "
+                          "Add them in the service's Environment tab and deploy again. "
+                          "The running version (if any) is not affected.",
+    "deploy.app_crashed": "The app crashed right after starting (see the container log above). "
+                          "The running version (if any) is not affected.",
+    "deploy.port_timeout": "The app did not accept connections on port {port} after {timeout}s. "
+                           "Make the app listen on 0.0.0.0:$PORT or set the correct port in the service settings. "
+                           "The running version (if any) is not affected.",
+    "deploy.switch_traffic": "==> Switching traffic to the new version",
+    "deploy.remove_old": "==> Removing old container {name}",
+    "deploy.patch_not_found": "Changes from agent #{job_id} not found",
+    "deploy.apply_patch": "==> Applying changes from agent #{job_id} (for this deploy only, the repo is unchanged)",
+    "deploy.apply_patch_failed": "Could not apply changes from agent #{job_id} to the latest source "
+                                 "(the repo changed in the same place). Run the agent again on the new version.",
+    "deploy.rollback_not_found": "No deploy found to roll back to",
+    "deploy.rollback_image_pruned": "Image {image} was cleaned up, cannot roll back to job #{job_id}",
+    "deploy.rollback": "==> Rolling back to job #{job_id} ({commit})",
+    "deploy.unknown_commit": "unknown commit",
+    # ---------- Database ----------
+    "db.wait_import": "==> Waiting for {label} to finish importing the backup",
+    "db.import_timeout": "{label} import is taking too long, deploy stopped",
+    "db.import_failed_warning": "==> Warning: import into {label} failed ({error}); the app will still be started",
+    "db.wait_ready": "==> Waiting for {label} to be ready ({host}:{port})",
+    "db.ready_timeout": "{label} is not ready after {timeout}s. Check the database page.",
+    "db.import_unsupported": "{engine} does not support backup import yet",
+    "db.backup_format": "Wrong backup file format for {engine}: expected {hint}",
+    "db.hint_mongo": "a mongodump archive file (--archive, may be gzipped) or a .json / .jsonl file",
+    "db.hint_sql": "a .sql or .sql.gz file",
+    # ---------- Detection ----------
+    "detect.start_from_settings": "start command from the service settings: {command}",
+    "detect.start_guessed": "Nixpacks found no start command; the panel detected {reason}: {command}",
+    "detect.fastapi": "a FastAPI app in {file}",
+    "detect.flask_gunicorn": "a Flask app in {file}, run with gunicorn",
+    "detect.flask_dev": "a Flask app in {file}; add gunicorn to requirements.txt for production",
+    "detect.python_main": "{file} has a __main__ block (the app must listen on port $PORT)",
+    "detect.node_version": "the repo does not declare a Node version: using Node {version} (the default Node 18 is end-of-life)",
+    "detect.spa_start": "the repo has a start script ({script}): running the repo's server instead of serving static files",
+    "detect.bun_no_avx2": "the server CPU has no AVX2 so Bun cannot run: installing and running with npm "
+                          "(--legacy-peer-deps to keep Bun's behavior of ignoring peer dependency conflicts)",
+    "detect.db_prisma": "Prisma uses provider \"{provider}\"",
+    "detect.db_env_url": ".env.example has a {scheme}:// connection string",
+    "detect.db_compose_image": "{file} uses image {image}",
+    "detect.db_package": "{file} uses {package}",
+    "detect.db_laravel": "Laravel uses MySQL by default",
+    "detect.db_wordpress": "WordPress uses MySQL/MariaDB",
+    # ---------- Agent ----------
+    "agent.provider_no_key": "Provider {name} has no API key",
+    "docker.exec_timeout": "(stopped after {timeout} seconds)",
+    "assistant.diff_truncated": "… (diff too long, truncated; download the patch for the full version)",
+    "heal.title": "Fix deploy #{job_id} of {target}",
+    "heal.prepare_title": "Prepare deploy #{job_id} of {target}",
+    "heal.prepare_start": "==> The AI Agent is preparing config and env vars before the build (model {model}) "
+                          "· conversation #{session} on the AI Agent page",
+    "heal.prepared": "==> The AI Agent added config / env vars",
+    "heal.prepare_no_change": "==> The AI Agent found the config complete, nothing changed",
+    "heal.start": "==> AI Agent is trying to fix it (attempt {attempt}/{max}, model {model}) · conversation #{session} on the AI Agent page",
+    "heal.skipped": "==> Skipping AI auto-fix: {error}",
+    "heal.failed": "==> The AI Agent could not fix it: {error}",
+    "heal.summary": "==> AI: {text}",
+    "heal.no_change": "==> The AI Agent changed no config, stopping the auto-fix",
+    "heal.rebuild": "==> The AI Agent changed the config, rebuilding",
+    "assistant.api_error": "The model API returned HTTP {code}: {detail}",
+    "assistant.empty_reply": "The model returned no content",
+    "assistant.blocked": "The model refused the request ({reason})",
+    "assistant.brain_unsupported": "This model choice is not supported yet",
+    "assistant.model_required": "Pick a model for provider {name} (or set a default model on the AI page)",
+    "assistant.interrupted": "The panel restarted while the agent was running: send a message to continue",
+    "assistant.no_reply": "(no reply from the model)",
+    "assistant.stopped": "(Stopped on request)",
+    "assistant.rate_limited": "The model is out of quota (free keys have very low limits). Add another model on the AI models page to switch over automatically.",
+    "assistant.retry_after": "retry in {when}",
+    "assistant.too_many_turns": "The agent stopped after {max} steps: send a message to continue",
+    # ---------- AI provider ----------
+    "ai.key_rejected": "The provider rejected the API key (HTTP {code})",
+    "ai.http_error": "The provider returned HTTP error {code}",
+    "ai.connect_failed": "Could not connect to {host}: {error}",
+    "ai.not_json": "The provider returned non-JSON data",
+    # ---------- 1-click apps ----------
+    "tpl.not_found": "This app is not in the catalog",
+    "tpl.no_docker": "The panel has no Docker access",
+    "tpl.needs_url": "{app} needs a public address: enter a domain, or set a base domain in Settings",
+    "tpl.service_exists": "A service named {name} already exists in the project",
+    "tpl.name_conflict": "The service name or domain is already in use",
+    "tpl.category.cms": "CMS & Blog",
+    "tpl.category.automation": "Automation",
+    "tpl.category.monitoring": "Monitoring",
+    "tpl.category.devtools": "Dev tools",
+    "tpl.wordpress.description": "The world's most popular CMS. Official image (PHP 8.3 + Apache), auto-generated "
+                                 "security keys, HTTPS behind Traefik and direct plugin installs.",
+    "tpl.wordpress.next_step": "Open the app to choose a language and create the admin account.",
+    "tpl.ghost.description": "A modern blogging, newsletter and membership platform built with Node.js.",
+    "tpl.ghost.next_step": "Go to /ghost on the app's address to create the admin account.",
+    "tpl.n8n.description": "Self-hosted Zapier-style workflow automation: drag-and-drop workflows, hundreds of "
+                           "integrations, AI calls.",
+    "tpl.n8n.next_step": "Open the app to create the owner account.",
+    "tpl.uptime-kuma.description": "Monitor whether your websites and services are up, with alerts via Telegram, "
+                                   "Discord, email...",
+    "tpl.uptime-kuma.next_step": "Open the app to create the admin account.",
+    "tpl.gitea.description": "A lightweight GitHub-style Git server: repos, issues, pull requests, CI (Actions).",
+    "tpl.gitea.next_step": "Open the app, check the prefilled settings, then click Install to create the admin account.",
+    "tpl.adminer.description": "Web-based database management (MySQL, MariaDB, PostgreSQL...). Log in with the host "
+                               "and password from the project's database page.",
+    "tpl.adminer.next_step": "Log in with the details from the database page (internal host, user, password).",
+}
